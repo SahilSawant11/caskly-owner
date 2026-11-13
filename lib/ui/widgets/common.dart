@@ -164,3 +164,111 @@ String dayLabel(DateTime d) {
   if (diff == 1) return 'Yesterday';
   return '${weekdayShort[d.weekday - 1]}, ${d.day} ${monthShort[d.month - 1]}';
 }
+
+/// Full-width ink pill button; shows a spinner while [busy].
+class InkButton extends StatelessWidget {
+  const InkButton({super.key, required this.text, required this.onPressed, this.busy = false});
+  final String text;
+  final VoidCallback? onPressed;
+  final bool busy;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    height: 56,
+    width: double.infinity,
+    child: FilledButton(
+      onPressed: busy ? null : onPressed,
+      style: FilledButton.styleFrom(
+        backgroundColor: C.ink,
+        foregroundColor: C.cream,
+        disabledBackgroundColor: C.ink.withValues(alpha: 0.85),
+        shape: const StadiumBorder(),
+        textStyle: label(size: 15, weight: FontWeight.w800),
+      ),
+      child: busy
+          ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.4, color: C.gold))
+          : Text(text),
+    ),
+  );
+}
+
+/// Flat white rounded input with a small label above it.
+class FlatField extends StatelessWidget {
+  const FlatField({
+    super.key,
+    required this.text,
+    required this.controller,
+    this.prefix,
+    this.suffix,
+    this.obscure = false,
+    this.keyboardType,
+    this.textInputAction,
+    this.onSubmitted,
+    this.autofillHints,
+    this.maxLength,
+  });
+
+  final String text;
+  final TextEditingController controller;
+  final String? prefix;
+  final Widget? suffix;
+  final bool obscure;
+  final TextInputType? keyboardType;
+  final TextInputAction? textInputAction;
+  final ValueChanged<String>? onSubmitted;
+  final Iterable<String>? autofillHints;
+  final int? maxLength;
+
+  @override
+  Widget build(BuildContext context) {
+    final border = OutlineInputBorder(borderRadius: BorderRadius.circular(20), borderSide: BorderSide.none);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 4, bottom: 8),
+          child: Text(text, style: label(size: 13)),
+        ),
+        TextField(
+          controller: controller,
+          obscureText: obscure,
+          keyboardType: keyboardType,
+          textInputAction: textInputAction,
+          onSubmitted: onSubmitted,
+          autofillHints: autofillHints,
+          maxLength: maxLength,
+          style: label(color: C.ink, size: 17, weight: FontWeight.w700),
+          cursorColor: C.ink,
+          decoration: InputDecoration(
+            counterText: '',
+            filled: true,
+            fillColor: C.paper,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+            prefixIcon: prefix == null
+                ? null
+                : Padding(
+                    padding: const EdgeInsets.only(left: 20, right: 10),
+                    child: Text(prefix!, style: label(size: 17, weight: FontWeight.w700)),
+                  ),
+            prefixIconConstraints: const BoxConstraints(minWidth: 0, minHeight: 0),
+            suffixIcon: suffix,
+            border: border,
+            enabledBorder: border,
+            focusedBorder: border.copyWith(borderSide: const BorderSide(color: C.ink, width: 1.5)),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// "2 min ago", "3 h ago", "12 Nov".
+String agoText(DateTime? t, {DateTime? now}) {
+  if (t == null) return 'never';
+  final ago = (now ?? DateTime.now()).difference(t);
+  if (ago.inMinutes < 1) return 'just now';
+  if (ago.inMinutes < 60) return '${ago.inMinutes} min ago';
+  if (ago.inHours < 24) return '${ago.inHours} h ago';
+  if (ago.inDays == 1) return 'yesterday';
+  return '${t.day} ${monthShort[t.month - 1]}';
+}
