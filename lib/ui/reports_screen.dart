@@ -17,18 +17,21 @@ class ReportsScreen extends StatefulWidget {
 class _ReportsScreenState extends State<ReportsScreen> {
   int _tab = const int.fromEnvironment('REPORT_TAB');
   late DateTime _day = _today;
+  DateTime get _today => widget.repo.today;
   late Future<DailySales> _sales = widget.repo.dailySales(_day);
   late Future<BrandwiseReport> _register = widget.repo.brandwise(_day);
+  int _registerMode = 0; // 0 by drink, 1 by counter brand
+  int _permitMode = 0; // 0 day, 1 month to date
+  late Future<LicenseHolderReport> _permits = _loadPermits();
 
-  static DateTime get _today {
-    final n = DateTime.now();
-    return DateTime(n.year, n.month, n.day);
-  }
+  Future<LicenseHolderReport> _loadPermits() =>
+      widget.repo.licenseHolders(_permitMode == 0 ? _day : DateTime(_day.year, _day.month, 1), _day);
 
   void _pick(DateTime d) => setState(() {
     _day = d;
     _sales = widget.repo.dailySales(d);
     _register = widget.repo.brandwise(d);
+    _permits = _loadPermits();
   });
 
   Future<void> _pickOlder() async {
@@ -56,22 +59,46 @@ class _ReportsScreenState extends State<ReportsScreen> {
         const ScreenTitle('Reports'),
         const SizedBox(height: 16),
         PillTabs(
-          labels: const ['Daily sales', 'Brandwise stock'],
+          labels: const ['Sales', 'Brandwise', 'Permits'],
           expand: true,
           selected: _tab,
           onSelected: (i) => setState(() => _tab = i),
         ),
         const SizedBox(height: 12),
-        _DayStrip(day: _day, onPick: _pick, onMore: _pickOlder),
+        _DayStrip(today: _today, day: _day, onPick: _pick, onMore: _pickOlder),
         const SizedBox(height: 16),
         if (_tab == 0)
           Loader<DailySales>(key: ValueKey('s$_day'), future: _sales, builder: (context, s) => _DailySalesView(s))
-        else
+        else if (_tab == 1) ...[
+          PillTabs(
+            labels: const ['By drink', 'Counter brand'],
+            expand: true,
+            selected: _registerMode,
+            onSelected: (i) => setState(() => _registerMode = i),
+          ),
+          const SizedBox(height: 12),
           Loader<BrandwiseReport>(
             key: ValueKey('b$_day'),
             future: _register,
-            builder: (context, r) => _BrandwiseView(r),
+            builder: (context, r) => _BrandwiseView(r, byCounterBrand: _registerMode == 1),
           ),
+        ] else ...[
+          PillTabs(
+            labels: const ['Day', 'Month to date'],
+            expand: true,
+            selected: _permitMode,
+            onSelected: (i) => setState(() {
+              _permitMode = i;
+              _permits = _loadPermits();
+            }),
+          ),
+          const SizedBox(height: 12),
+          Loader<LicenseHolderReport>(
+            key: ValueKey('p$_day$_permitMode'),
+            future: _permits,
+            builder: (context, r) => _PermitsView(r),
+          ),
+        ],
       ],
     );
   }
@@ -79,15 +106,14 @@ class _ReportsScreenState extends State<ReportsScreen> {
 
 /// The last two weeks as tappable day chips, plus a calendar for older days.
 class _DayStrip extends StatelessWidget {
-  const _DayStrip({required this.day, required this.onPick, required this.onMore});
+  const _DayStrip({required this.today, required this.day, required this.onPick, required this.onMore});
+  final DateTime today;
   final DateTime day;
   final ValueChanged<DateTime> onPick;
   final VoidCallback onMore;
 
   @override
   Widget build(BuildContext context) {
-    final n = DateTime.now();
-    final today = DateTime(n.year, n.month, n.day);
     final days = [for (var k = 0; k < 14; k++) today.subtract(Duration(days: k))];
     final inStrip = days.contains(day);
     return SizedBox(
@@ -194,7 +220,7 @@ class _DailySalesView extends StatelessWidget {
               if (s.returns > 0) ...[
                 const SizedBox(height: 12),
                 Text(
-                  'Returns ₹${inr(s.returns)}',
+                  'Returned today ₹${inr(s.returns)} · ${s.returnedBottles} bottle${s.returnedBottles == 1 ? '' : 's'}',
                   style: label(color: C.down, size: 12, weight: FontWeight.w700),
                 ),
               ],
@@ -394,8 +420,9 @@ class _PayCard extends StatelessWidget {
 // ── Brandwise register ──────────────────────────────────────────────────
 
 class _BrandwiseView extends StatelessWidget {
-  const _BrandwiseView(this.r);
+  const _BrandwiseView(this.r, {required this.byCounterBrand});
   final BrandwiseReport r;
+  final bool byCounterBrand;
 
   @override
   Widget build(BuildContext context) {
@@ -422,7 +449,7 @@ class _BrandwiseView extends StatelessWidget {
           ),
         ),
         for (final cat in BrandwiseReport.categoryOrder)
-          if (r.rows.any((x) => x.category == cat)) ...[
+          if (r.lines.any((x) => x.category == cat)) ...[
             const SizedBox(height: 20),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 4),
@@ -439,11 +466,16 @@ class _BrandwiseView extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 8),
-            for (final row in r.rows.where((x) => x.category == cat)) ...[_BrandTile(row), const SizedBox(height: 8)],
+            if (byCounterBrand)
+              for (final row in r.rows.where((x) => x.category == cat)) ...[_BrandTile(row), const SizedBox(height: 8)]
+            else
+              for (final line in r.linesOf(cat)) ...[_LineTile(line), const SizedBox(height: 8)],
           ],
         const SizedBox(height: 8),
         Text(
-          'Same figures as the counter\'s Brandwise Stock Report.',
+          byCounterBrand
+              ? 'Same figures as the counter\'s Counter Brandwise report.'
+              : 'Same figures as the counter\'s Brandwise Stock Report. Returns count on the day they happen.',
           textAlign: TextAlign.center,
           style: label(size: 12, weight: FontWeight.w500),
         ),
@@ -525,7 +557,8 @@ class _BrandTileState extends State<_BrandTile> {
               _MoveRow(t, header: true),
               if (_open) ...[
                 const SizedBox(height: 10),
-                for (final e in row.bySize.entries)
+                for (final e in row.bySize.entries.toList()
+                  ..sort((a, b) => BrandwiseReport.compareSizes(a.key, b.key)))
                   Container(
                     padding: const EdgeInsets.only(top: 10),
                     decoration: const BoxDecoration(
@@ -577,6 +610,133 @@ class _MoveRow extends StatelessWidget {
         col('In', m.purchase),
         col('Sold', m.sale),
         col('Closing', m.closing, strong: true),
+      ],
+    );
+  }
+}
+
+/// One drink in one size: its four figures, the TP it came in on, and any
+/// bottles customers brought back that day.
+class _LineTile extends StatelessWidget {
+  const _LineTile(this.line);
+  final RegisterLine line;
+
+  @override
+  Widget build(BuildContext context) {
+    final notes = [
+      if (line.tps.isNotEmpty) 'In on ${line.tps.join(', ')}',
+      if (line.m.returned > 0) '${line.m.returned} brought back today',
+    ];
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+      decoration: BoxDecoration(color: C.paper, borderRadius: BorderRadius.circular(22)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  line.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: label(color: C.ink, size: 15, weight: FontWeight.w700),
+                ),
+              ),
+              const SizedBox(width: 8),
+              SizeChip(line.size),
+            ],
+          ),
+          const SizedBox(height: 10),
+          _MoveRow(line.m),
+          if (notes.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(notes.join(' · '), style: label(size: 11, weight: FontWeight.w600)),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Bottles sold against each permit: a bill counts on its day, bottles
+/// brought back come off on the day they came back.
+class _PermitsView extends StatelessWidget {
+  const _PermitsView(this.r);
+  final LicenseHolderReport r;
+
+  @override
+  Widget build(BuildContext context) {
+    final sameDay = r.from == r.to;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        FlatCard(
+          color: C.ink,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                sameDay ? 'Permits · ${dayLabel(r.to)}' : 'Permits · ${r.from.day}–${dayLabel(r.to)}',
+                style: label(color: C.cream.withValues(alpha: 0.6), size: 14),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  _Big('Permits', r.rows.length),
+                  _Big('Bills', r.bills),
+                  _Big('Bottles', r.bottles, gold: true),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        if (r.rows.isEmpty)
+          Padding(
+            padding: const EdgeInsets.all(24),
+            child: Text('No bills on a permit yet.', textAlign: TextAlign.center, style: label(size: 13)),
+          ),
+        for (final row in r.rows) ...[
+          Container(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+            decoration: BoxDecoration(color: C.paper, borderRadius: BorderRadius.circular(22)),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        row.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: label(color: C.ink, size: 15, weight: FontWeight.w700),
+                      ),
+                      const SizedBox(height: 4),
+                      Text('${row.permitNo} · ${row.bills} bill${row.bills == 1 ? '' : 's'}', style: label(size: 12)),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(inr(row.bottles), style: figure(22, weight: FontWeight.w400)),
+                    Text('₹${inr(row.amount)}', style: label(size: 12)),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+        ],
+        const SizedBox(height: 4),
+        Text(
+          'Same figures as the counter\'s License Holders report.',
+          textAlign: TextAlign.center,
+          style: label(size: 12, weight: FontWeight.w500),
+        ),
       ],
     );
   }
